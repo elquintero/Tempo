@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#141721"><link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
+<title>Tempo diario</title>
+<style>
+:root{--bg:#141721;--card:#1f2331;--ink:#edf0f7;--mut:#9aa3b8;--acc:#4a86f7;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--ink);font:16px system-ui,sans-serif;-webkit-tap-highlight-color:transparent}
+body{padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom));max-width:520px;margin:auto}
+h1{font-size:24px;margin:6px 0 14px}
+.card{background:var(--card);border-radius:16px;padding:14px;margin-bottom:12px}
+.row{display:flex;gap:10px;align-items:center;justify-content:space-between}
+.big{font-size:32px;font-weight:700}.mut{color:var(--mut);font-size:14px;line-height:1.4}
+.c{text-align:center}
+button{font:inherit;color:var(--ink);background:#2b3248;border:0;border-radius:12px;padding:12px 16px}
+button.main{background:var(--acc);font-size:20px;font-weight:700;width:100%;padding:18px;margin-bottom:12px}
+.bars{display:flex;align-items:flex-end;gap:4px;height:90px;margin-top:8px}
+.bars i{flex:1;background:var(--acc);border-radius:4px 4px 0 0}.bars i.e{background:#2b3248}
+#play{display:none;position:fixed;inset:0;background:var(--bg);flex-direction:column;align-items:center;justify-content:center;gap:20px;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+body.play #play{display:flex}body.play #home,body.res #home,#res{display:none}body.res #res{display:block}
+#pulse{width:min(60vw,250px);aspect-ratio:1;border-radius:50%;background:var(--card);border:5px solid #2b3248;display:flex;align-items:center;justify-content:center;font-size:64px;font-weight:700;transition:transform .08s,background .08s}
+#pulse.on{background:var(--acc);transform:scale(1.07)}#pulse.sil{border-style:dashed;color:#4a5575}
+#meter{position:relative;width:min(80vw,380px);height:14px;background:#2b3248;border-radius:7px}
+#meter b{position:absolute;left:50%;top:-4px;width:3px;height:22px;background:var(--mut)}
+#dot{position:absolute;top:-3px;width:20px;height:20px;margin-left:-10px;border-radius:50%;left:50%;background:var(--mut);transition:left .1s}
+#prog{position:absolute;top:0;left:0;height:5px;background:var(--acc);width:0}
+</style></head><body>
+
+<div id="home">
+  <h1>🎹 Tempo diario</h1>
+  <div class="card row c">
+    <div><div class="big" id="streak">0</div><div class="mut">días seguidos</div></div>
+    <div><div class="big" id="today">0/2</div><div class="mut">hoy</div></div>
+    <div><div class="big" id="best">—</div><div class="mut">mejor tempo</div></div>
+  </div>
+  <div class="card row">
+    <div><div class="mut">Tempo de hoy (se ajusta solo)</div><div class="big"><span id="bpm">70</span> BPM</div></div>
+    <div><button onclick="adj(-2)">−</button> <button onclick="adj(2)">+</button></div>
+  </div>
+  <button class="main" onclick="start()">▶ Empezar práctica</button>
+  <div class="card"><div class="mut">Tu progreso (últimos 14 días, mejor puntuación)</div><div class="bars" id="bars"></div></div>
+  <div class="card mut">
+    <b style="color:var(--ink)">Cómo funciona</b><br>
+    Toca la pantalla (o una tecla de tu piano MIDI) en cada pulso. Se alternan 4 pulsos <b>con clic</b> y 4 <b>en silencio</b>: en el silencio entrenas tu tempo interno. Si lo haces bien, mañana el tempo sube solo; si cuesta, baja.<br><br>
+    <b style="color:var(--ink)">Consejo:</b> 2 sesiones al día (unos 5 min) valen más que una hora de golpe.
+  </div>
+  <p class="c mut"><a href="#" onclick="if(confirm('¿Borrar todo tu progreso?')){D={bpm:70,hist:[]};save();home()}return false" style="color:var(--mut)">Borrar datos</a></p>
+</div>
+
+<div id="play">
+  <div id="prog"></div>
+  <div class="mut" id="ph" style="font-size:20px">Prepárate…</div>
+  <div id="pulse">·</div>
+  <div id="meter"><b></b><span id="dot"></span></div>
+  <div id="fb" class="big" style="min-height:40px;font-size:24px"></div>
+  <button onclick="stop()">Salir</button>
+</div>
+
+<div id="res">
+  <h1>Resultado</h1>
+  <div class="card c"><div class="big" id="sc" style="font-size:64px">0</div><div class="mut">puntos (0-100)</div></div>
+  <div class="card" id="rtxt"></div>
+  <button class="main" onclick="start()">↻ Otra sesión</button>
+  <button style="width:100%" onclick="home()">Inicio</button>
+</div>
+
+<script>
+const KEY="tempoDiario", $=id=>document.getElementById(id), clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+let D={bpm:70,hist:[]};
+try{Object.assign(D,JSON.parse(localStorage.getItem(KEY)||"{}"))}catch(e){}
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(D))}catch(e){}};
+const day=(d=new Date())=>d.toLocaleDateString("sv");           // AAAA-MM-DD
+
+/* ---------- Inicio: racha, hoy, gráfico ---------- */
+function home(){
+  const best={};D.hist.forEach(h=>best[h.d]=Math.max(best[h.d]||0,h.score));
+  let streak=0,d=new Date();if(!best[day(d)])d.setDate(d.getDate()-1);
+  while(best[day(d)]){streak++;d.setDate(d.getDate()-1)}
+  $("streak").textContent=streak;
+  $("today").textContent=D.hist.filter(h=>h.d==day()).length+"/2";
+  $("bpm").textContent=D.bpm;
+  const good=D.hist.filter(h=>h.score>=80).map(h=>h.bpm);
+  $("best").textContent=good.length?Math.max(...good):"—";
+  let html="";for(let i=13;i>=0;i--){const x=new Date();x.setDate(x.getDate()-i);const v=best[day(x)];
+    html+=`<i class="${v?"":"e"}" style="height:${v||4}%"></i>`}
+  $("bars").innerHTML=html;document.body.className="";
+}
+const adj=n=>{D.bpm=clamp(D.bpm+n,40,160);save();home()};
+
+/* ---------- Ejercicio ---------- */
+let ac,run=null,N_CYC=20,N=160,midi=0;                  // 20 ciclos de 8 pulsos (4 con clic + 4 en silencio)
+const aud=()=>ac.currentTime-(ac.outputLatency||ac.baseLatency||0);   // tiempo que se está OYENDO ahora
+
+function click(t,acc){
+  const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=acc?1500:1000;
+  o.connect(g);g.connect(ac.destination);
+  g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.6,t+.002);g.gain.exponentialRampToValueAtTime(.0001,t+.05);
+  o.start(t);o.stop(t+.06);
+}
+function start(){
+  ac=ac||new (window.AudioContext||window.webkitAudioContext)();ac.resume();
+  initMidi();try{navigator.wakeLock&&navigator.wakeLock.request("screen").catch(()=>{})}catch(e){}
+  N=N_CYC*8;const beat=60/D.bpm,t0=ac.currentTime+.4+4*beat;   // t0 = instante del pulso 0
+  for(let i=-4;i<N;i++){const k=((i%8)+8)%8;if(i<0||k<4)click(t0+i*beat,i==-4||k==0)}   // clics programados con precisión
+  run={beat,t0,hits:new Array(N).fill(null),last:-99,over:false};
+  $("fb").textContent="";$("dot").style.left="50%";document.body.className="play";requestAnimationFrame(loop);
+}
+const stop=()=>{run=null;home()};
+
+function loop(){
+  if(!run)return;
+  const i=Math.floor((aud()-run.t0)/run.beat);
+  if(i!=run.last){run.last=i;
+    if(i>=N){return finish()}
+    const p=$("pulse"),k=((i%8)+8)%8,sil=i>=0&&k>=4;
+    $("ph").textContent=i<0?"Cuenta atrás":sil?"SIN CLIC · sigue tú":"Con clic";
+    p.textContent=i<0?i+5:(k%4)+1;p.className=sil?"sil":"on";
+    if(!sil)setTimeout(()=>p.classList.remove("on"),90);
+    $("prog").style.width=clamp(i/N,0,1)*100+"%";
+  }
+  requestAnimationFrame(loop);
+}
+
+/* Cada toque se asigna al pulso más cercano; el error = cuántos ms antes (−) o después (+) */
+function hit(ts){
+  if(!run||run.over)return;
+  const o=ac.getOutputTimestamp&&ac.getOutputTimestamp();
+  const t=o&&o.performanceTime?o.contextTime+(ts-o.performanceTime)/1000:aud();
+  const k=Math.round((t-run.t0)/run.beat),e=(t-run.t0-k*run.beat)*1000;
+  if(k<0||k>=N||run.hits[k]!=null||Math.abs(e)>run.beat*500)return;
+  run.hits[k]=e;
+  const a=Math.abs(e);$("dot").style.left=50+clamp(e/150,-1,1)*50+"%";
+  $("dot").style.background=a<35?"var(--ok)":a<80?"var(--warn)":"var(--bad)";
+  $("fb").textContent=a<35?"¡Justo!":Math.round(a)+" ms "+(e<0?"pronto":"tarde");
+}
+$("play").addEventListener("pointerdown",e=>{if(e.target.tagName!="BUTTON")hit(e.timeStamp)});
+addEventListener("keydown",e=>{if(run&&!e.repeat){e.preventDefault();hit(e.timeStamp)}});
+function initMidi(){                                    // teclado MIDI (Chrome Android / ordenador)
+  if(midi||!navigator.requestMIDIAccess)return;midi=1;
+  navigator.requestMIDIAccess().then(a=>{
+    const b=()=>a.inputs.forEach(i=>i.onmidimessage=m=>{if((m.data[0]&240)==144&&m.data[2])hit(m.timeStamp)});
+    b();a.onstatechange=b}).catch(()=>{});
+}
+
+/* ---------- Resultado y ajuste automático del tempo ---------- */
+function finish(){
+  const h=run.hits;run.over=true;run=null;
+  const sum=a=>a.reduce((x,y)=>x+y,0),played=h.filter(e=>e!=null).length;
+  const score=Math.round(sum(h.map(e=>e==null?0:Math.max(0,1-Math.abs(e)/120)*100))/N);
+  const avg=f=>{const a=h.filter((e,i)=>e!=null&&f(i)).map(Math.abs);return a.length?Math.round(sum(a)/a.length):null};
+  const g=avg(i=>i%8<4),s=avg(i=>i%8>=4),dr=[];
+  for(let c=0;c<N_CYC;c++){const a=h[c*8+4],z=h[c*8+7];if(a!=null&&z!=null)dr.push((z-a)/3)}   // deriva en el silencio
+  const drift=dr.length?sum(dr)/dr.length:0;
+  let t=`<div>Con clic: <b>${g==null?"—":"±"+g+" ms"}</b> de media</div><div>En silencio: <b>${s==null?"—":"±"+s+" ms"}</b> de media</div><div>Pulsos sin tocar: <b>${N-played}</b> de ${N}</div><br>`;
+  if(played<N*.2)t+=`<b>No he detectado suficientes toques</b>, esta sesión no se guarda.`;
+  else{
+    const old=D.bpm;let nx=old;if(score>=80)nx=Math.min(160,old+4);else if(score<55)nx=Math.max(40,old-4);
+    D.hist.push({d:day(),bpm:old,score,g,s,miss:N-played});D.bpm=nx;save();
+    t+=Math.abs(drift)<4?"En silencio mantienes el pulso muy estable. ":`En silencio tiendes a <b>${drift>0?"frenar":"acelerar"}</b> (~${Math.round(Math.abs(drift))} ms por pulso). `;
+    t+=score>=80?`<br><br>🎉 ¡Excelente! Mañana subimos a <b>${nx} BPM</b>.`:score<55?`<br><br>Bajamos a <b>${nx} BPM</b> para afianzar el pulso.`:`<br><br>Bien. Repite a <b>${nx} BPM</b>: la constancia es lo que mejora el tempo.`;
+  }
+  $("sc").textContent=score;$("rtxt").innerHTML=t;document.body.className="res";
+}
+home();
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+</script></body></html>
